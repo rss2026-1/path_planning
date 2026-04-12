@@ -1,7 +1,5 @@
 <launch>
-    <!-- <node pkg="path_planning" exec="trajectory_planner" name="trajectory_planner" output="screen"> -->
-    <!-- <node pkg="path_planning" exec="trajectory_planner_rrt_star" name="trajectory_planner_rrt_star" output="screen"> -->
-    <node pkg="path_planning" exec="trajectory_planner_astar" name="trajectory_planner_astar" output="screen">
+    <node pkg="path_planning" exec="trajectory_planner" name="trajectory_planner" output="screen">
         <param from="$(find-pkg-share path_planning)/config/sim/sim_config.yaml"/>
     </node>
 </launch>

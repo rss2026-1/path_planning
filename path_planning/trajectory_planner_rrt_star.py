@@ -10,16 +10,12 @@ import heapq
 from scipy.ndimage import binary_dilation
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
-class Node:
+class TreeNode:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.parent = None
         self.cost = 0.0
-class Graph:
-    def __init__(self, vertices, edges):
-        self.vertices = vertices
-        self.edges = edges
 
 class PathPlan(Node):
     """ Listens for goal pose published by RViz and uses it to plan a path from
@@ -171,8 +167,8 @@ class PathPlan(Node):
         return simplified
 
     # RRT* functions
-    def rrt_star(self, start_point, end_point, map, max_iterations=5000, step_size=5.0, search_radius=20.0):
-        start_node = Node(start_point[0], start_point[1])
+    def rrt_star(self, start_point, end_point, map, max_iterations=1000, step_size=5.0, search_radius=10.0):
+        start_node = TreeNode(start_point[0], start_point[1])
         start_node.cost = 0.0
 
         tree = [start_node]
@@ -187,7 +183,7 @@ class PathPlan(Node):
                 rand_point = (np.random.randint(0, map.shape[0]), np.random.randint(0, map.shape[1]))
 
             # Find nearest node in tree
-            nearest_node = min(tree, key=lambda node: np.sqrt((node.x - rand_point[0])**2 + (node.y - rand_point[1])**2))
+            nearest_node = min(tree, key=lambda node: (node.x - rand_point[0])**2 + (node.y - rand_point[1])**2)
 
             # Steer from nearest toward random point
             new_node_pos = self.steer(nearest_node, rand_point, step_size)
@@ -197,7 +193,7 @@ class PathPlan(Node):
                 continue
 
             # Create new node
-            new_node = Node(new_node_pos[0], new_node_pos[1])
+            new_node = TreeNode(new_node_pos[0], new_node_pos[1])
             dist_to_nearest = np.sqrt((new_node.x - nearest_node.x)**2 + (new_node.y - nearest_node.y)**2)
             new_node.cost = nearest_node.cost + dist_to_nearest
             new_node.parent = nearest_node
@@ -249,7 +245,9 @@ class PathPlan(Node):
             self.get_logger().warn("RRT* failed to find a path")
             return None
 
-        return self.reconstruct_path(best_goal_node)
+        path = self.reconstruct_path(best_goal_node)
+        path.append(end_point)
+        return path
 
     def steer(self, from_node, to_point, step_size=1.0):
         """Steer from a node toward a point, limited by step_size."""
@@ -291,8 +289,7 @@ class PathPlan(Node):
         inflated_map[end_point[0], end_point[1]] = 0
 
         result = self.rrt_star(start_point, end_point, inflated_map)
-        # self.get_logger().info(f"A* result: {result}")
-
+        # self.get_logger().info(f"RRT* result: {result}")
 
         if result is None:
             return

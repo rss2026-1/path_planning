@@ -1,3 +1,11 @@
+"""
+Testing pure pursuit
+
+- ros2 launch racecar_simulator simulate.launch.xml
+- ros2 launch path_planning sim_plan_follow.launch.xml
+- ros2 launch path_planning load_trajectory.launch.xml
+"""
+
 import rclpy
 import numpy as np
 from ackermann_msgs.msg import AckermannDriveStamped
