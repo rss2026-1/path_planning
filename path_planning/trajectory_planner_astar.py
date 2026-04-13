@@ -53,8 +53,10 @@ class PathPlanAStar(Node):
         self.grid_map = None
         self.map_info = None
         self.current_pose = None
+        self.map_dilation_factor = 0.5 #by default, this used to be self.robot_radius which is set to 0.5, so 0.5 is likely our "default setting" assuming robot_radius is still set at 0.5
 
         self.robot_radius = 0.5
+        # self.res = 
 
 
         self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory")
@@ -62,6 +64,7 @@ class PathPlanAStar(Node):
     def world_to_grid(self, x, y):
         origin = self.map_info.origin
         res = self.map_info.resolution
+        self.get_logger().info(f'Resolution:{res}')
         # rotation angle from map origin quaternion
         theta = 2 * np.arctan2(origin.orientation.z, origin.orientation.w)
         dx = x - origin.position.x
@@ -105,7 +108,6 @@ class PathPlanAStar(Node):
         self.plan_path(start_map, end_map, self.grid_map)
 
 
-
     def a_star(self, start_point, end_point, map):
 
         def _is_free(row, col):
@@ -127,6 +129,8 @@ class PathPlanAStar(Node):
 
             return path
 
+        
+        
         sr, sc = start_point
         er, ec = end_point
 
@@ -173,7 +177,10 @@ class PathPlanAStar(Node):
                     return trace_path(parent_row, parent_col)
 
                 new_g = g[i, j] + np.sqrt(dr**2 + dc**2)
-                new_f = new_g + calc_h(row, col)
+                # new_f = new_g + calc_h(row, col)
+                epsilon = 1.0 # heuristic weight, can be tuned- mainly for analyis
+                new_f = new_g + epsilon * calc_h(row, col)
+
 
                 if new_f < f[row, col]:
                     f[row, col] = new_f
@@ -244,15 +251,12 @@ class PathPlanAStar(Node):
 
         return simplified
 
-
-
-
-
     def plan_path(self, start_point, end_point, map):
         self.trajectory.clear()
 
         #inflate map
-        r = int(self.robot_radius/self.map_info.resolution)
+        # r = int(self.robot_radius/self.map_info.resolution)
+        r = int(self.map_dilation_factor / self.map_info.resolution)
         y,x = np.ogrid[-r:r+1, -r:r+1]
         kernel = x**2 + y**2 <= r**2
 

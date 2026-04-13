@@ -28,10 +28,10 @@ class PurePursuit(Node):
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
-        self.lookahead = 1.5    # meters
+        self.lookahead = 1.0    # meters
         self.speed = 1.0    # m/s
         self.wheelbase_length = 0.34   # meters
-        self.goal_threshold = 1.5
+        self.goal_threshold = 1.0
 
         # Take the car to the start line
         self.start_threshold = 1.0

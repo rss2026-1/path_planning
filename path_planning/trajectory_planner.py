@@ -10,20 +10,13 @@ import heapq
 from scipy.ndimage import binary_dilation
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
-class TreeNode:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.parent = None
-        self.cost = 0.0
-
-class PathPlan(Node):
+class PathPlanAStar(Node):
     """ Listens for goal pose published by RViz and uses it to plan a path from
     current car pose.
     """
 
     def __init__(self):
-        super().__init__("trajectory_planner")
+        super().__init__("trajectory_planner_astar")
         self.declare_parameter('odom_topic', "default")
         self.declare_parameter('map_topic', "default")
 
@@ -60,15 +53,18 @@ class PathPlan(Node):
         self.grid_map = None
         self.map_info = None
         self.current_pose = None
+        self.map_dilation_factor = 0.5 #by default, this used to be self.robot_radius which is set to 0.5, so 0.5 is likely our "default setting" assuming robot_radius is still set at 0.5
 
         self.robot_radius = 0.5
+        # self.res = 
+
 
         self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory")
 
-    # coordinate transforms
     def world_to_grid(self, x, y):
         origin = self.map_info.origin
         res = self.map_info.resolution
+        self.get_logger().info(f'Resolution:{res}')
         # rotation angle from map origin quaternion
         theta = 2 * np.arctan2(origin.orientation.z, origin.orientation.w)
         dx = x - origin.position.x
@@ -89,7 +85,6 @@ class PathPlan(Node):
         y = map_x * np.sin(theta) + map_y * np.cos(theta) + origin.position.y
         return (x, y)
 
-    # call back functions
     def map_cb(self, msg):
         self.get_logger().info("Map received")
         self.map_info = msg.info
@@ -112,7 +107,92 @@ class PathPlan(Node):
         end_map = self.world_to_grid(end_x, end_y)
         self.plan_path(start_map, end_map, self.grid_map)
 
-    # Utility functions
+
+
+    def a_star(self, start_point, end_point, map):
+
+        def _is_free(row, col):
+            if row < 0 or row >= map.shape[0] or col < 0 or col >= map.shape[1]:
+                return False
+            return map[row, col] == 0  # only free cells (inflated map has 0=free, 1=obstacle)
+
+        def calc_h(row, col):
+            return np.sqrt((row - end_point[0])**2 + (col - end_point[1])**2)
+
+        def trace_path(parent_row, parent_col):
+            path = []
+            row, col = end_point
+            while (row, col) != start_point:
+                path.append((row, col))
+                row, col = parent_row[row, col], parent_col[row, col]
+            path.append(start_point)
+            path.reverse()
+
+            return path
+
+        sr, sc = start_point
+        er, ec = end_point
+
+        if not _is_free(sr, sc) or not _is_free(er, ec):
+            self.get_logger().warn(f"Occupied goal/start: start={map[sr,sc]} end={map[er,ec]}")
+            return None
+
+        if start_point == end_point:
+            self.get_logger().warn("Already at goal")
+            return None
+
+        rows, cols = map.shape
+        f          = np.full((rows, cols), np.inf)
+        g          = np.full((rows, cols), np.inf)
+        parent_row = np.full((rows, cols), -1, dtype=int)
+        parent_col = np.full((rows, cols), -1, dtype=int)
+
+        g[sr, sc] = 0.0
+        f[sr, sc] = calc_h(sr, sc)
+        parent_row[sr, sc] = sr
+        parent_col[sr, sc] = sc
+
+        open_list = [(f[sr, sc], sr, sc)]
+        closed_set = set()
+
+        directions = [(1,1), (1,0), (1,-1), (0,1), (0,-1), (-1,1), (-1,0), (-1,-1)]
+
+        while open_list:
+            _, i, j = heapq.heappop(open_list)
+
+            if (i, j) in closed_set:
+                continue
+            closed_set.add((i, j))
+
+            for dr, dc in directions:
+                row, col = i + dr, j + dc
+
+                if (row, col) in closed_set or not _is_free(row, col):
+                    continue
+
+                if (row, col) == end_point:
+                    parent_row[row, col] = i
+                    parent_col[row, col] = j
+                    return trace_path(parent_row, parent_col)
+
+                new_g = g[i, j] + np.sqrt(dr**2 + dc**2)
+                new_f = new_g + calc_h(row, col)
+
+                if new_f < f[row, col]:
+                    f[row, col] = new_f
+                    g[row, col] = new_g
+                    parent_row[row, col] = i
+                    parent_col[row, col] = j
+                    heapq.heappush(open_list, (new_f, row, col))
+
+        self.get_logger().warn("No path found")
+        return None
+
+    def _is_free(self, row, col):
+            if self.grid_map[row, col] == 0:
+                return True
+            return False
+
     def bresenham(self, x0, y0, x1, y1):
         dx = x1 - x0
         dy = y1 - y0
@@ -138,6 +218,7 @@ class PathPlan(Node):
                 y += 1
                 D -= 2*dx
             D += 2*dy
+
 
     def line_of_sight(self, p1, p2, map):
         for r, c in self.bresenham(p1[0], p1[1], p2[0], p2[1]):
@@ -166,116 +247,16 @@ class PathPlan(Node):
 
         return simplified
 
-    # RRT* functions
-    def rrt_star(self, start_point, end_point, map, max_iterations=1000, step_size=5.0, search_radius=10.0):
-        start_node = TreeNode(start_point[0], start_point[1])
-        start_node.cost = 0.0
 
-        tree = [start_node]
-        best_goal_node = None
-        best_cost = np.inf
 
-        for iteration in range(max_iterations):
-            # Goal biasing: 10% chance to sample goal directly
-            if np.random.rand() < 0.1:
-                rand_point = end_point
-            else:
-                rand_point = (np.random.randint(0, map.shape[0]), np.random.randint(0, map.shape[1]))
 
-            # Find nearest node in tree
-            nearest_node = min(tree, key=lambda node: (node.x - rand_point[0])**2 + (node.y - rand_point[1])**2)
 
-            # Steer from nearest toward random point
-            new_node_pos = self.steer(nearest_node, rand_point, step_size)
-
-            # Check collision
-            if not self.line_of_sight(tuple([nearest_node.x, nearest_node.y]), new_node_pos, map):
-                continue
-
-            # Create new node
-            new_node = TreeNode(new_node_pos[0], new_node_pos[1])
-            dist_to_nearest = np.sqrt((new_node.x - nearest_node.x)**2 + (new_node.y - nearest_node.y)**2)
-            new_node.cost = nearest_node.cost + dist_to_nearest
-            new_node.parent = nearest_node
-
-            # Find nearby nodes for rewiring (RRT* optimization step)
-            nearby_nodes = []
-            for node in tree:
-                dist = np.sqrt((node.x - new_node.x)**2 + (node.y - new_node.y)**2)
-                if dist < search_radius:
-                    nearby_nodes.append(node)
-
-            # Find best parent among nearby nodes
-            best_parent = nearest_node
-            best_cost_through_parent = new_node.cost
-
-            for nearby_node in nearby_nodes:
-                if self.line_of_sight(tuple([nearby_node.x, nearby_node.y]), new_node_pos, map):
-                    dist_through_nearby = np.sqrt((nearby_node.x - new_node.x)**2 + (nearby_node.y - new_node.y)**2)
-                    cost_through_nearby = nearby_node.cost + dist_through_nearby
-
-                    if cost_through_nearby < best_cost_through_parent:
-                        best_parent = nearby_node
-                        best_cost_through_parent = cost_through_nearby
-
-            new_node.parent = best_parent
-            new_node.cost = best_cost_through_parent
-            tree.append(new_node)
-
-            # Rewire nearby nodes through new node
-            for nearby_node in nearby_nodes:
-                if self.line_of_sight(tuple([new_node.x, new_node.y]), tuple([nearby_node.x, nearby_node.y]), map):
-                    dist_through_new = np.sqrt((new_node.x - nearby_node.x)**2 + (new_node.y - nearby_node.y)**2)
-                    cost_through_new = new_node.cost + dist_through_new
-
-                    if cost_through_new < nearby_node.cost:
-                        nearby_node.parent = new_node
-                        nearby_node.cost = cost_through_new
-
-            # Check if new node can reach goal
-            if self.line_of_sight(new_node_pos, end_point, map):
-                dist_to_goal = np.sqrt((new_node.x - end_point[0])**2 + (new_node.y - end_point[1])**2)
-                cost_to_goal = new_node.cost + dist_to_goal
-
-                if cost_to_goal < best_cost:
-                    best_cost = cost_to_goal
-                    best_goal_node = new_node
-
-        if best_goal_node is None:
-            self.get_logger().warn("RRT* failed to find a path")
-            return None
-
-        path = self.reconstruct_path(best_goal_node)
-        path.append(end_point)
-        return path
-
-    def steer(self, from_node, to_point, step_size=1.0):
-        """Steer from a node toward a point, limited by step_size."""
-        direction = np.array(to_point) - np.array([from_node.x, from_node.y])
-        length = np.linalg.norm(direction)
-
-        if length < step_size:
-            return tuple(to_point)
-        else:
-            direction = direction / length
-            new_point = np.array([from_node.x, from_node.y]) + direction * step_size
-            return (int(new_point[0]), int(new_point[1]))
-
-    def reconstruct_path(self, end_node):
-        """Reconstruct path by tracing back through parent pointers."""
-        path = []
-        current = end_node
-        while current is not None:
-            path.append((current.x, current.y))
-            current = current.parent
-        return path[::-1]
-
-    # Plan Path function
     def plan_path(self, start_point, end_point, map):
         self.trajectory.clear()
 
         #inflate map
-        r = int(self.robot_radius/self.map_info.resolution)
+        # r = int(self.robot_radius/self.map_info.resolution)
+        r = int(self.map_dilation_factor / self.map_info.resolution)
         y,x = np.ogrid[-r:r+1, -r:r+1]
         kernel = x**2 + y**2 <= r**2
 
@@ -288,8 +269,9 @@ class PathPlan(Node):
         inflated_map[start_point[0], start_point[1]] = 0
         inflated_map[end_point[0], end_point[1]] = 0
 
-        result = self.rrt_star(start_point, end_point, inflated_map)
-        # self.get_logger().info(f"RRT* result: {result}")
+        result = self.a_star(start_point, end_point, inflated_map)
+        # self.get_logger().info(f"A* result: {result}")
+
 
         if result is None:
             return
@@ -301,8 +283,9 @@ class PathPlan(Node):
         self.trajectory.publish_viz()
 
 
+
 def main(args=None):
     rclpy.init(args=args)
-    planner = PathPlan()
+    planner = PathPlanAStar()
     rclpy.spin(planner)
     rclpy.shutdown()

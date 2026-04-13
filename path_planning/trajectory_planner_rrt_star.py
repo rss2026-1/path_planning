@@ -60,6 +60,7 @@ class PathPlan(Node):
         self.grid_map = None
         self.map_info = None
         self.current_pose = None
+        self.map_dilation_factor = 0.5 #by default, this used to be self.robot_radius which is set to 0.5, so 0.5 is likely our "default setting" assuming robot_radius is still set at 0.5
 
         self.robot_radius = 0.5
 
@@ -168,6 +169,21 @@ class PathPlan(Node):
 
     # RRT* functions
     def rrt_star(self, start_point, end_point, map, max_iterations=1000, step_size=5.0, search_radius=10.0):
+        '''
+        Adding in functionality to time how long astar takes as well as calculating the difference between the absolute distance between the start and goal points as well as the actual path length.
+        
+        Time: 
+        1. Start timer at beginning of rrt_star function
+        2. End timer right before return statement
+        3. Calculate elapsed time and log it
+        
+        Path length:
+        1. Calculate straight line distance between start and end points using Euclidean distance
+        2. Calculate actual path length by summing distances between consecutive nodes in the path
+        3. Log both the straight line distance and the actual path length, as well as the ratio of actual path length to straight line distance (path efficiency)
+        ''' 
+        time_start = self.get_clock().now()  # Start timer
+        
         start_node = TreeNode(start_point[0], start_point[1])
         start_node.cost = 0.0
 
@@ -247,6 +263,21 @@ class PathPlan(Node):
 
         path = self.reconstruct_path(best_goal_node)
         path.append(end_point)
+        
+        ##########################################################################################
+        # For analysis: calculate straight line distance, actual path length, and path efficiency
+        ##########################################################################################
+        straight_line_distance = np.sqrt((start_point[0] - end_point[0])**2 + (start_point[1] - end_point[1])**2)
+        actual_path_length = sum(np.sqrt((path[i][0] - path[i-1][0])**2 + (path[i][1] - path[i-1][1])**2) for i in range(1, len(path)))
+        path_efficiency = actual_path_length / straight_line_distance if straight_line_distance > 0 else float('inf')   
+        time_end = self.get_clock().now()  # End timer
+        elapsed_time = (time_end - time_start).nanoseconds / 1e9  # Calculate elapsed time in seconds
+        self.get_logger().info(f"RRT* elapsed time: {elapsed_time:.4f} seconds")
+        self.get_logger().info(f"RRT* straight line distance: {straight_line_distance:.4f}")
+        self.get_logger().info(f"RRT* actual path length: {actual_path_length:.4f}")
+        self.get_logger().info(f"RRT* path efficiency: {path_efficiency:.4f}")
+        self.get_logger().info(f"RRT* number of iterations: {max_iterations}")
+        
         return path
 
     def steer(self, from_node, to_point, step_size=1.0):
@@ -275,7 +306,8 @@ class PathPlan(Node):
         self.trajectory.clear()
 
         #inflate map
-        r = int(self.robot_radius/self.map_info.resolution)
+        # r = int(self.robot_radius/self.map_info.resolution)
+        r = int(self.map_dilation_factor / self.map_info.resolution)
         y,x = np.ogrid[-r:r+1, -r:r+1]
         kernel = x**2 + y**2 <= r**2
 
