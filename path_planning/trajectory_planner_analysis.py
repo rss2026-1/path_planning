@@ -18,6 +18,8 @@ if __name__ == "__main__":
     
     RRT*: [elapsed_time, straight_line_distance, actual_path_length, path_efficiency, max_iterations]
     A*: [elapsed_time, straight_line_distance, actual_path_length, path_efficiency]
+    
+    5x point for each list. Take a screen shot of Rviz for each list, so 6x images in total. 
     '''
     
     rrt_star_data_path1 = [
