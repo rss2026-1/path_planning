@@ -10,16 +10,12 @@ import heapq
 from scipy.ndimage import binary_dilation
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
-class Node:
+class TreeNode:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.parent = None
         self.cost = 0.0
-class Graph:
-    def __init__(self, vertices, edges):
-        self.vertices = vertices
-        self.edges = edges
 
 class PathPlan(Node):
     """ Listens for goal pose published by RViz and uses it to plan a path from
@@ -27,7 +23,7 @@ class PathPlan(Node):
     """
 
     def __init__(self):
-        super().__init__("trajectory_planner")
+        super().__init__("trajectory_planner_rrt_star")
         self.declare_parameter('odom_topic', "default")
         self.declare_parameter('map_topic', "default")
 
@@ -64,10 +60,11 @@ class PathPlan(Node):
         self.grid_map = None
         self.map_info = None
         self.current_pose = None
+        self.map_dilation_factor = 0.5 #by default, this used to be self.robot_radius which is set to 0.5, so 0.5 is likely our "default setting" assuming robot_radius is still set at 0.5
 
         self.robot_radius = 0.5
 
-        self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory")
+        self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory_rrt_star", color=(1.0, 0.5, 0.0))
 
     # coordinate transforms
     def world_to_grid(self, x, y):
@@ -171,13 +168,31 @@ class PathPlan(Node):
         return simplified
 
     # RRT* functions
-    def rrt_star(self, start_point, end_point, map, max_iterations=5000, step_size=5.0, search_radius=20.0):
-        start_node = Node(start_point[0], start_point[1])
+    def rrt_star(self, start_point, end_point, map, max_iterations=10000, step_size=5.0, search_radius=20.0):
+        '''
+        Adding in functionality to time how long astar takes as well as calculating the difference between the absolute distance between the start and goal points as well as the actual path length.
+
+        Time:
+        1. Start timer at beginning of rrt_star function
+        2. End timer right before return statement
+        3. Calculate elapsed time and log it
+
+        Path length:
+        1. Calculate straight line distance between start and end points using Euclidean distance
+        2. Calculate actual path length by summing distances between consecutive nodes in the path
+        3. Log both the straight line distance and the actual path length, as well as the ratio of actual path length to straight line distance (path efficiency)
+        '''
+        time_start = self.get_clock().now()  # Start timer
+
+        start_node = TreeNode(start_point[0], start_point[1])
         start_node.cost = 0.0
 
         tree = [start_node]
         best_goal_node = None
         best_cost = np.inf
+
+        # Keep node coordinates in a numpy array for fast nearest/nearby lookups
+        tree_coords = np.array([[start_node.x, start_node.y]], dtype=np.float32)
 
         for iteration in range(max_iterations):
             # Goal biasing: 10% chance to sample goal directly
@@ -186,8 +201,10 @@ class PathPlan(Node):
             else:
                 rand_point = (np.random.randint(0, map.shape[0]), np.random.randint(0, map.shape[1]))
 
-            # Find nearest node in tree
-            nearest_node = min(tree, key=lambda node: np.sqrt((node.x - rand_point[0])**2 + (node.y - rand_point[1])**2))
+            # Find nearest node in tree (vectorized)
+            diffs = tree_coords - np.array([rand_point[0], rand_point[1]], dtype=np.float32)
+            nearest_idx = int(np.argmin((diffs ** 2).sum(axis=1)))
+            nearest_node = tree[nearest_idx]
 
             # Steer from nearest toward random point
             new_node_pos = self.steer(nearest_node, rand_point, step_size)
@@ -197,17 +214,15 @@ class PathPlan(Node):
                 continue
 
             # Create new node
-            new_node = Node(new_node_pos[0], new_node_pos[1])
+            new_node = TreeNode(new_node_pos[0], new_node_pos[1])
             dist_to_nearest = np.sqrt((new_node.x - nearest_node.x)**2 + (new_node.y - nearest_node.y)**2)
             new_node.cost = nearest_node.cost + dist_to_nearest
             new_node.parent = nearest_node
 
-            # Find nearby nodes for rewiring (RRT* optimization step)
-            nearby_nodes = []
-            for node in tree:
-                dist = np.sqrt((node.x - new_node.x)**2 + (node.y - new_node.y)**2)
-                if dist < search_radius:
-                    nearby_nodes.append(node)
+            # Find nearby nodes for rewiring (vectorized)
+            diffs_new = tree_coords - np.array([new_node.x, new_node.y], dtype=np.float32)
+            nearby_mask = (diffs_new ** 2).sum(axis=1) < search_radius ** 2
+            nearby_nodes = [tree[i] for i in np.where(nearby_mask)[0]]
 
             # Find best parent among nearby nodes
             best_parent = nearest_node
@@ -225,6 +240,7 @@ class PathPlan(Node):
             new_node.parent = best_parent
             new_node.cost = best_cost_through_parent
             tree.append(new_node)
+            tree_coords = np.vstack([tree_coords, [new_node.x, new_node.y]])
 
             # Rewire nearby nodes through new node
             for nearby_node in nearby_nodes:
@@ -249,7 +265,20 @@ class PathPlan(Node):
             self.get_logger().warn("RRT* failed to find a path")
             return None
 
-        return self.reconstruct_path(best_goal_node)
+        path = self.reconstruct_path(best_goal_node)
+        path.append(end_point)
+
+        ##########################################################################################
+        # For analysis: calculate straight line distance and elapsed time
+        ##########################################################################################
+        straight_line_distance = np.sqrt((start_point[0] - end_point[0])**2 + (start_point[1] - end_point[1])**2)
+        time_end = self.get_clock().now()  # End timer
+        elapsed_time = (time_end - time_start).nanoseconds / 1e9  # Calculate elapsed time in seconds
+        self.get_logger().info(f"RRT* elapsed time: {elapsed_time:.4f} seconds")
+        self.get_logger().info(f"RRT* straight line distance: {straight_line_distance:.4f}")
+        self.get_logger().info(f"RRT* number of iterations: {max_iterations}")
+
+        return path
 
     def steer(self, from_node, to_point, step_size=1.0):
         """Steer from a node toward a point, limited by step_size."""
@@ -277,7 +306,8 @@ class PathPlan(Node):
         self.trajectory.clear()
 
         #inflate map
-        r = int(self.robot_radius/self.map_info.resolution)
+        # r = int(self.robot_radius/self.map_info.resolution)
+        r = int(self.map_dilation_factor / self.map_info.resolution)
         y,x = np.ogrid[-r:r+1, -r:r+1]
         kernel = x**2 + y**2 <= r**2
 
@@ -291,13 +321,19 @@ class PathPlan(Node):
         inflated_map[end_point[0], end_point[1]] = 0
 
         result = self.rrt_star(start_point, end_point, inflated_map)
-        # self.get_logger().info(f"A* result: {result}")
-
+        # self.get_logger().info(f"RRT* result: {result}")
 
         if result is None:
             return
 
-        for row, col in self.parse_path(result, inflated_map):
+        parsed = list(self.parse_path(result, inflated_map))
+        parsed_length = sum(np.sqrt((parsed[i][0]-parsed[i-1][0])**2 + (parsed[i][1]-parsed[i-1][1])**2) for i in range(1, len(parsed)))
+        straight_line_distance = np.sqrt((start_point[0]-end_point[0])**2 + (start_point[1]-end_point[1])**2)
+        path_efficiency = straight_line_distance / parsed_length if parsed_length > 0 else float('inf')
+        self.get_logger().info(f"RRT* parsed path length: {parsed_length:.4f}")
+        self.get_logger().info(f"RRT* path efficiency: {path_efficiency:.4f}")
+
+        for row, col in parsed:
             self.trajectory.addPoint(self.grid_to_world(row, col))
 
         self.traj_pub.publish(self.trajectory.toPoseArray())

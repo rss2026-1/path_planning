@@ -53,15 +53,18 @@ class PathPlanAStar(Node):
         self.grid_map = None
         self.map_info = None
         self.current_pose = None
+        self.map_dilation_factor = 0.5 #by default, this used to be self.robot_radius which is set to 0.5, so 0.5 is likely our "default setting" assuming robot_radius is still set at 0.5
 
         self.robot_radius = 0.5
+        # self.res =
 
 
-        self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory")
+        self.trajectory = LineTrajectory(node=self, viz_namespace="/planned_trajectory_astar", color=(0.0, 0.5, 1.0))
 
     def world_to_grid(self, x, y):
         origin = self.map_info.origin
         res = self.map_info.resolution
+        self.get_logger().info(f'Resolution:{res}')
         # rotation angle from map origin quaternion
         theta = 2 * np.arctan2(origin.orientation.z, origin.orientation.w)
         dx = x - origin.position.x
@@ -105,7 +108,6 @@ class PathPlanAStar(Node):
         self.plan_path(start_map, end_map, self.grid_map)
 
 
-
     def a_star(self, start_point, end_point, map):
 
         def _is_free(row, col):
@@ -126,6 +128,10 @@ class PathPlanAStar(Node):
             path.reverse()
 
             return path
+
+
+
+        time_start = self.get_clock().now()
 
         sr, sc = start_point
         er, ec = end_point
@@ -170,10 +176,19 @@ class PathPlanAStar(Node):
                 if (row, col) == end_point:
                     parent_row[row, col] = i
                     parent_col[row, col] = j
-                    return trace_path(parent_row, parent_col)
+                    path = trace_path(parent_row, parent_col)
+                    elapsed = (self.get_clock().now() - time_start).nanoseconds / 1e9
+                    straight_line = np.sqrt((sr - er)**2 + (sc - ec)**2)
+                    self.get_logger().info(f"A* elapsed time: {elapsed:.4f} seconds")
+                    self.get_logger().info(f"A* straight line distance: {straight_line:.4f}")
+                    self.get_logger().info(f"A* nodes expanded: {len(closed_set)}")
+                    return path
 
                 new_g = g[i, j] + np.sqrt(dr**2 + dc**2)
-                new_f = new_g + calc_h(row, col)
+                # new_f = new_g + calc_h(row, col)
+                epsilon = 1.0 # heuristic weight, can be tuned- mainly for analyis
+                new_f = new_g + epsilon * calc_h(row, col)
+
 
                 if new_f < f[row, col]:
                     f[row, col] = new_f
@@ -182,7 +197,8 @@ class PathPlanAStar(Node):
                     parent_col[row, col] = j
                     heapq.heappush(open_list, (new_f, row, col))
 
-        self.get_logger().warn("No path found")
+        elapsed = (self.get_clock().now() - time_start).nanoseconds / 1e9
+        self.get_logger().warn(f"A* no path found after {elapsed:.4f} seconds")
         return None
 
     def _is_free(self, row, col):
@@ -244,15 +260,12 @@ class PathPlanAStar(Node):
 
         return simplified
 
-
-
-
-
     def plan_path(self, start_point, end_point, map):
         self.trajectory.clear()
 
         #inflate map
-        r = int(self.robot_radius/self.map_info.resolution)
+        # r = int(self.robot_radius/self.map_info.resolution)
+        r = int(self.map_dilation_factor / self.map_info.resolution)
         y,x = np.ogrid[-r:r+1, -r:r+1]
         kernel = x**2 + y**2 <= r**2
 
@@ -272,7 +285,14 @@ class PathPlanAStar(Node):
         if result is None:
             return
 
-        for row, col in self.parse_path(result, inflated_map):
+        parsed = list(self.parse_path(result, inflated_map))
+        parsed_length = sum(np.sqrt((parsed[i][0]-parsed[i-1][0])**2 + (parsed[i][1]-parsed[i-1][1])**2) for i in range(1, len(parsed)))
+        straight_line = np.sqrt((start_point[0]-end_point[0])**2 + (start_point[1]-end_point[1])**2)
+        efficiency = straight_line / parsed_length if parsed_length > 0 else float('inf')
+        self.get_logger().info(f"A* parsed path length: {parsed_length:.4f}")
+        self.get_logger().info(f"A* path efficiency: {efficiency:.4f}")
+
+        for row, col in parsed:
             self.trajectory.addPoint(self.grid_to_world(row, col))
 
         self.traj_pub.publish(self.trajectory.toPoseArray())
