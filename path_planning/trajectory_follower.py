@@ -149,9 +149,8 @@ class PurePursuit(Node):
                 lookahead_point = p1 + t2 * d
                 break
 
-            if 0.0 <= t1 <= 1.0:
-                lookahead_point = p1 + t1 * d
-                break
+            # Do NOT fall back to t1 here. t1 is the backward (entry) intersection
+            # and may be behind the car when t2 > 1.0. Continue to the next segment.
 
         # fallback if no intersection found and aim for last point
         if lookahead_point is None:
