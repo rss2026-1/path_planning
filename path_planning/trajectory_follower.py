@@ -13,6 +13,7 @@ from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from visualization_msgs.msg import Marker
+from std_msgs.msg import Float64
 from .utils import LineTrajectory
 
 
@@ -28,14 +29,16 @@ class PurePursuit(Node):
         self.odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
-        self.lookahead = 1.0    # meters
+        self.lookahead = 0.5    # meters
         self.speed = 1.0    # m/s
         self.wheelbase_length = 0.34   # meters
-        self.goal_threshold = 1.0
+        self.goal_threshold = 0.5
 
         # Take the car to the start line
-        self.start_threshold = 1.0
+        self.start_threshold = 0.5
         self.reached_start = False
+
+        self.error_pub = self.create_publisher(Float64, "/cross_track_error", 1)
 
         self.initialized_traj = False
         self.stopped = False
@@ -108,7 +111,17 @@ class PurePursuit(Node):
             self.reached_start = True
             self.get_logger().info("Reached the start")
 
-        # Find nearest segment - normal pure pursuit
+
+        if self.reached_start:
+            error = self.compute_across_track_error(car_pos, points)
+            error_msg = Float64()
+            error_msg.data = error
+            self.error_pub.publish(error_msg)
+
+        # Car's forward unit vector
+        forward = np.array([np.cos(car_yaw), np.sin(car_yaw)])
+
+        # Find nearest segment - prefer segments whose closest point is in front
         starts = points[:-1]
         ends = points[1:]
         segs = ends - starts
@@ -121,9 +134,14 @@ class PurePursuit(Node):
 
         closest_points = starts + t[:, None] * segs
         dists = np.linalg.norm(closest_points - car_pos, axis=1)
-        nearest_seg_idx = int(np.argmin(dists))
 
-        # Find lookahead point
+        # Penalize segments whose closest point is behind the car so we never
+        # lock onto a segment we have already passed.
+        forward_proj = ((closest_points - car_pos) * forward).sum(axis=1)
+        penalty = np.where(forward_proj < 0, 1e6, 0.0)
+        nearest_seg_idx = int(np.argmin(dists + penalty))
+
+        # Find lookahead point - intersection must lie in the front semicircle
         lookahead_point = None
         for i in range(nearest_seg_idx, len(segs)):
             p1 = points[i]
@@ -142,23 +160,32 @@ class PurePursuit(Node):
                 continue # no intersection with this segment
 
             sqrt_disc = np.sqrt(discriminant)
-            t1 = (-b - sqrt_disc) / (2 * a)
             t2 = (-b + sqrt_disc) / (2 * a)
+            t1 = (-b - sqrt_disc) / (2 * a)
 
-            if 0.0 <= t2 <= 1.0:
-                lookahead_point = p1 + t2 * d
+            # Prefer the farther intersection (t2) but require it to be in front
+            for t_val in [t2, t1]:
+                if 0.0 <= t_val <= 1.0:
+                    candidate = p1 + t_val * d
+                    if np.dot(candidate - car_pos, forward) > 0:
+                        lookahead_point = candidate
+                        break
+
+            if lookahead_point is not None:
                 break
 
-            # Do NOT fall back to t1 here. t1 is the backward (entry) intersection
-            # and may be behind the car when t2 > 1.0. Continue to the next segment.
-
-        # fallback if no intersection found and aim for last point
+        # Pick the nearest path point that is still in the front semicircle
         if lookahead_point is None:
-            self.publish_drive(0.0, 0.0)
-            self.stopped = True
-            # lookahead_point = points[-1]
-            self.get_logger().info("Path end reached")
-            return
+            forward_dots = ((points - car_pos) * forward).sum(axis=1)
+            front_mask = forward_dots > 0
+            if front_mask.any():
+                front_pts = points[front_mask]
+                lookahead_point = front_pts[np.argmin(np.linalg.norm(front_pts - car_pos, axis=1))]
+            else:
+                self.publish_drive(0.0, 0.0)
+                self.stopped = True
+                self.get_logger().info("Path end reached")
+                return
 
         # visualize lookahead point
         self.publish_lookahead_marker(lookahead_point)
@@ -202,6 +229,22 @@ class PurePursuit(Node):
         marker.color.b = 0.2
         marker.color.a= 1.0
         self.lookahead_pub.publish(marker)
+
+    def compute_across_track_error(self, car_pos, points):
+        starts = points[:-1]
+        ends = points[1:]
+        segs = ends - starts
+
+        seg_len_sq = np.sum(segs ** 2, axis = 1)
+        seg_len_sq = np.maximum(seg_len_sq, 1e-10)
+
+        t = np.sum((car_pos - starts) * segs, axis = 1) / seg_len_sq
+        t = np.clip(t, 0.0, 1.0)
+
+        closest_points = starts + t[:, None] * segs
+        dists = np. linalg.norm(closest_points - car_pos, axis = 1)
+
+        return float(np.min(dists))
 
     def trajectory_callback(self, msg):
         self.get_logger().info(f"Receiving new trajectory {len(msg.poses)} points")
