@@ -20,13 +20,12 @@ class LanePurePursuit(Node):
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
         self.speed = 1.0              # m/s
-        self.lookahead = 0.5          # meters
-        # self.lookahead = self.speed/2          # meters
+        self.lookahead = self.speed/2          # meters
 
         self.wheelbase_length = 0.34  # meters
 
         self.local_y_avg = 0.0
-        self.local_y_alpha = 0.15         # exponential moving avg
+        self.local_y_alpha = 0.5         # exponential moving avg
         self.lane_switch_threshold = 0.5  # meters , half lane width
         self.recovering = False
 
