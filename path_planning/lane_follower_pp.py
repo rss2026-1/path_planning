@@ -1,6 +1,6 @@
 """
 Lane following pure pursuit — subscribes to /lane_center_path (nav_msgs/Path)
-published by lane_detector_BEV in base_link frame.
+published by lane_detector in base_link frame.
 """
 
 import rclpy
@@ -11,24 +11,25 @@ from rclpy.node import Node
 from visualization_msgs.msg import Marker
 
 
-class LanePurePursuit(Node):
-    """Pure pursuit that follows the lane center path from lane_detector_BEV."""
+class LaneFollowerPP(Node):
+    """Pure pursuit that follows the lane center path from lane_detector."""
 
     def __init__(self):
-        super().__init__("trajectory_follower_lane")
+        super().__init__("lane_follower_pp")
         self.declare_parameter('drive_topic', "default")
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
         self.speed = 1.0              # m/s
-        self.lookahead = 0.5          # meters
-        # self.lookahead = self.speed/2          # meters
+        self.lookahead = self.speed/2 # meters
 
         self.wheelbase_length = 0.34  # meters
 
         self.local_y_avg = 0.0
-        self.local_y_alpha = 0.15         # exponential moving avg
+        self.local_y_alpha = 0.5          # exponential moving avg
         self.lane_switch_threshold = 0.5  # meters , half lane width
         self.recovering = False
+        self.recovery_frames = 0
+        self.recovery_max_frames = 30     # give up recovery after ~1 s at 30 Hz
 
         self.last_mean_y = None
         self.mean_y_jump_threshold = 0.5  # meters. sudden lateral jump means detector switched lanes
@@ -108,14 +109,17 @@ class LanePurePursuit(Node):
 
         if abs(self.local_y_avg) > self.lane_switch_threshold:
             self.recovering = True
+            self.recovery_frames = 0
 
         if self.recovering:
-            if abs(self.local_y_avg) < 0.1:
+            self.recovery_frames += 1
+            if abs(self.local_y_avg) < 0.1 or self.recovery_frames > self.recovery_max_frames:
                 self.recovering = False
+                self.recovery_frames = 0
             else:
                 self.get_logger().warn(
-                    f"Recovering from lane switch: local_y_avg={self.local_y_avg:.3f} m")
-                # steer opposite to the direction of the drift
+                    f"Recovering from lane switch: local_y_avg={self.local_y_avg:.3f} m "
+                    f"(frame {self.recovery_frames}/{self.recovery_max_frames})")
                 recovery_angle = np.clip(-np.sign(self.local_y_avg) * 0.5, -1.0, 1.0)
                 self.publish_drive(self.speed, recovery_angle)
                 return
@@ -150,6 +154,6 @@ class LanePurePursuit(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    follower = LanePurePursuit()
+    follower = LaneFollowerPP()
     rclpy.spin(follower)
     rclpy.shutdown()
