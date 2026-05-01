@@ -60,10 +60,9 @@ class LanePurePursuit(Node):
             return
         self.last_mean_y = mean_y
 
-        segs = points[1:] - points[:-1]
         lookahead_point = None
 
-        for i in range(len(segs)):
+        for i in range(len(points) - 1):
             p1, p2 = points[i], points[i + 1]
             d = p2 - p1
             f = p1 - car_pos
