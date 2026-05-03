@@ -1,9 +1,13 @@
-trajectory_planner:
+trajectory_planner_astar:
   ros__parameters:
     odom_topic: "/pf/pose/odom"
     map_topic: "/map"
     scan_topic: "/scan"
 trajectory_follower:
+  ros__parameters:
+    odom_topic: "/pf/pose/odom"
+    drive_topic: /vesc/input/navigation
+state_machine_b:
   ros__parameters:
     odom_topic: "/pf/pose/odom"
     drive_topic: /vesc/input/navigation

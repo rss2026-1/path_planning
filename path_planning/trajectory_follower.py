@@ -12,6 +12,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from std_msgs.msg import Bool
 from visualization_msgs.msg import Marker
 from .utils import LineTrajectory
 
@@ -39,8 +40,11 @@ class PurePursuit(Node):
 
         self.initialized_traj = False
         self.stopped = False
+        self.enabled = True             # gated by state_machine_b via /trajectory_follower/enabled
         self.trajectory = LineTrajectory(self, "/followed_trajectory")
 
+        self.enable_sub = self.create_subscription(
+            Bool, "/trajectory_follower/enabled", self.enable_callback, 1)
         self.pose_sub = self.create_subscription(Odometry,
                                                  self.odom_topic,
                                                  self.pose_callback,
@@ -56,8 +60,11 @@ class PurePursuit(Node):
                                                    "/lookahead_point",
                                                    1)
 
+    def enable_callback(self, msg: Bool):
+        self.enabled = msg.data
+
     def pose_callback(self, odometry_msg):
-        if not self.initialized_traj or self.stopped:
+        if not self.enabled or not self.initialized_traj or self.stopped:
             return
 
         points = np.array(self.trajectory.points)
