@@ -34,7 +34,13 @@ setup(
             'trajectory_planner = path_planning.trajectory_planner:main',
             'trajectory_follower = path_planning.trajectory_follower:main',
             'trajectory_planner_astar = path_planning.trajectory_planner_astar:main',
-            'trajectory_planner_rrt_star = path_planning.trajectory_planner_rrt_star:main'
+            'trajectory_planner_rrt_star = path_planning.trajectory_planner_rrt_star:main',
+            'trajectory_follower_mpc = path_planning.trajectory_follower_mpc:main',
+            'track_publisher = path_planning.track_publisher:main',
+            'lane_follower_pp = path_planning.lane_follower_pp:main',
+            'state_machine_b = path_planning.state_machine_b:main',
+            'cone_detector_final_challenge_b = visual_servoing.cone_detector_final_challenge_b:main',
+            'yolo_annotator_final_challenge_b = visual_servoing.yolo_annotator_final_challenge_b:main',
         ],
     },
 )

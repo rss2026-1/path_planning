@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Launch ZED Camera. Originally called with ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed -->
+  <!-- <include file="$(find-pkg-share zed_wrapper)/launch/zed_camera.launch.py">
+    <arg name="camera_model" value="zed"/>
+  </include> -->
+
+  <!-- Launch Simulator -->
+  <!-- <include file="$(find-pkg-share racecar_simulator)/launch/simulate.launch.xml"/> -->
+
+  <!-- Load combined parameters -->
+  <let name="param_file" value="$(find-pkg-share path_planning)/params_final_b.yaml"/>
+
+  <!-- Launch Wall Follower -->
+  <!-- <node pkg="wall_follower" name="wall_follower" exec="wall_follower" output="screen">
+    <param from="$(find-pkg-share wall_follower)/params.yaml"/>
+  </node> -->
+
+  <!-- Launch Visual Servoing -->
+  <node pkg="wall_follower" name="stop_system" exec="stop_system" output="screen">
+  </node>
+
+  <node pkg="visual_servoing" name="parking_controller" exec="parking_controller" output="screen">
+  	<param name="drive_topic" value="/vesc/low_level/input/navigation" />
+  </node>
+
+  <node pkg="visual_servoing" name="cone_detector_final_challenge_b" exec="cone_detector_final_challenge_b" output="screen">
+  </node>
+
+  <node pkg="visual_servoing" name="homography_transformer" exec="homography_transformer" output="screen">
+  </node>
+
+  <node pkg="image_transport" name="republish" exec="republish" args="raw in:=/cone_debug_img out:=/cone_debug_img_compressed" output="screen"></node>
+
+  <!-- Launch Localization -->
+  <!-- <node pkg="localization" exec="particle_filter" name="particle_filter" output="screen">
+    <param from="$(find-pkg-share localization)/real_params.yaml"/>
+  </node> -->
+
+  <!-- Launch Path Planning -->
+  <node pkg="path_planning" exec="trajectory_planner_astar" name="trajectory_planner_astar">
+    <param from="$(find-pkg-share path_planning)/config/real/config.yaml"/>
+  </node>
+  <node pkg="path_planning" exec="trajectory_follower" name="trajectory_follower" output="screen">
+    <param from="$(find-pkg-share path_planning)/config/real/config.yaml"/>
+  </node>
+  <node pkg="localization" exec="particle_filter" name="particle_filter" output="screen">
+    <param from="$(find-pkg-share path_planning)/config/real/pf_config.yaml"/>
+  </node>
+
+  <!-- Launch Visual Servoing YOLO -->
+  <node pkg="visual_servoing" name="yolo_annotator_final_challenge_b" exec="yolo_annotator_final_challenge_b" output="screen">
+    <param name="model" value="yolo11n.pt" />
+    <param name="conf_threshold" value="0.5" />
+    <param name="iou_threshold" value="0.7" />
+  </node>
+
+  <!-- Launch State Machine -->
+  <node pkg="path_planning" exec="state_machine_b" name="state_machine_b" output="screen">
+    <param from="$(find-pkg-share path_planning)/config/real/config.yaml"/>
+  </node>
+</launch>

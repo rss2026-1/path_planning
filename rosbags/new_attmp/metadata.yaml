@@ -1,0 +1,32 @@
+rosbag2_bagfile_information:
+  version: 5
+  storage_identifier: sqlite3
+  duration:
+    nanoseconds: 61898207712
+  starting_time:
+    nanoseconds_since_epoch: 1776124824650069120
+  message_count: 3097
+  topics_with_message_count:
+    - topic_metadata:
+        name: /followed_trajectory/path
+        type: visualization_msgs/msg/Marker
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 1
+    - topic_metadata:
+        name: /odom
+        type: nav_msgs/msg/Odometry
+        serialization_format: cdr
+        offered_qos_profiles: "- history: 3\n  depth: 0\n  reliability: 1\n  durability: 2\n  deadline:\n    sec: 9223372036\n    nsec: 854775807\n  lifespan:\n    sec: 9223372036\n    nsec: 854775807\n  liveliness: 1\n  liveliness_lease_duration:\n    sec: 9223372036\n    nsec: 854775807\n  avoid_ros_namespace_conventions: false"
+      message_count: 3096
+  compression_format: ""
+  compression_mode: ""
+  relative_file_paths:
+    - new_attmp_0.db3
+  files:
+    - path: new_attmp_0.db3
+      starting_time:
+        nanoseconds_since_epoch: 1776124824650069120
+      duration:
+        nanoseconds: 61898207712
+      message_count: 3097
