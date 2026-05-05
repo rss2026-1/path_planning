@@ -5,6 +5,7 @@ published by lane_detector in base_link frame.
 
 import rclpy
 import numpy as np
+from collections import deque
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Path
 from rclpy.node import Node
@@ -33,8 +34,8 @@ class LaneFollowerPP(Node):
         self.recovery_frames = 0
         self.recovery_max_frames = 30   # give up recovery after ~1 s at 30 Hz
 
-        self.last_mean_y = None
-        self.mean_y_jump_threshold = 0.5    # meters. sudden lateral jump means detector switched lanes
+        self.mean_y_history = deque(maxlen=10)   # ring buffer of accepted mean_y values
+        self.mean_y_jump_threshold = 0.5         # meters — jump vs. median of history
 
         self.last_drive = None  # (speed, steering_angle) of last published command
 
@@ -62,15 +63,17 @@ class LaneFollowerPP(Node):
 
 
         mean_y = np.mean(points[:, 1])
-        if self.last_mean_y is not None and abs(mean_y - self.last_mean_y) > self.mean_y_jump_threshold:
-            self.get_logger().warn(
-                f"Detected Lane snap rejected: mean_y jumped {mean_y - self.last_mean_y:.3f} m")
-            if self.last_drive is not None:
-                self.publish_drive(*self.last_drive)
-            else:
-                self.publish_drive(self.speed, 0.0)
-            return
-        self.last_mean_y = mean_y
+        if self.mean_y_history:
+            ref_y = np.median(self.mean_y_history)
+            if abs(mean_y - ref_y) > self.mean_y_jump_threshold:
+                self.get_logger().warn(
+                    f"Lane snap rejected: mean_y={mean_y:.3f} jumped {mean_y - ref_y:.3f} m from median ref={ref_y:.3f}")
+                if self.last_drive is not None:
+                    self.publish_drive(*self.last_drive)
+                else:
+                    self.publish_drive(self.speed, 0.0)
+                return
+        self.mean_y_history.append(mean_y)
 
         segs = points[1:] - points[:-1]
         lookahead_point = None
@@ -119,9 +122,9 @@ class LaneFollowerPP(Node):
         self.local_y_avg = (self.local_y_alpha * local_y
                             + (1.0 - self.local_y_alpha) * self.local_y_avg)
 
-        if abs(self.local_y_avg) > self.lane_switch_threshold:
-            self.recovering = True
-            self.recovery_frames = 0
+        # if abs(self.local_y_avg) > self.lane_switch_threshold:
+        #     self.recovering = True
+        #     self.recovery_frames = 0
 
         if self.recovering:
             self.recovery_frames += 1
