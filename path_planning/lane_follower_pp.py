@@ -19,7 +19,7 @@ class LaneFollowerPP(Node):
         self.declare_parameter('drive_topic', "default")
         self.drive_topic = self.get_parameter('drive_topic').get_parameter_value().string_value
 
-        self.speed = 6.0 # m/s
+        self.speed = 4.0 # m/s
         self.lookahead = self.speed/2 # metes
         self.lookahead = 2.5
 
@@ -35,6 +35,8 @@ class LaneFollowerPP(Node):
 
         self.last_mean_y = None
         self.mean_y_jump_threshold = 0.5    # meters. sudden lateral jump means detector switched lanes
+
+        self.last_drive = None  # (speed, steering_angle) of last published command
 
         self.traj_sub = self.create_subscription(Path,
                                                  "/lane_center_path",
@@ -63,7 +65,10 @@ class LaneFollowerPP(Node):
         if self.last_mean_y is not None and abs(mean_y - self.last_mean_y) > self.mean_y_jump_threshold:
             self.get_logger().warn(
                 f"Detected Lane snap rejected: mean_y jumped {mean_y - self.last_mean_y:.3f} m")
-            self.publish_drive(self.speed, 0)
+            if self.last_drive is not None:
+                self.publish_drive(*self.last_drive)
+            else:
+                self.publish_drive(self.speed, 0.0)
             return
         self.last_mean_y = mean_y
 
@@ -138,13 +143,15 @@ class LaneFollowerPP(Node):
 
         self.publish_drive(self.speed, steering_angle)
 
-    def publish_drive(self, speed, steering_angle):
+    def publish_drive(self, speed, steering_angle, save=True):
         msg = AckermannDriveStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
         msg.drive.speed = float(speed)
         msg.drive.steering_angle = float(steering_angle)
         self.drive_pub.publish(msg)
+        if save:
+            self.last_drive = (float(speed), float(steering_angle))
 
     def publish_lookahead_marker(self, point):
         marker = Marker()
